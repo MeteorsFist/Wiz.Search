@@ -169,25 +169,17 @@ class WizIndex(object):
                     try:
                         data = zf.read(filename)
                         html_content = BeautifulSoup(data, 'html5lib')
+                        content = html_content.body.text
                         if self.verbose:
                             print('%s %s, %s' % (i, action, r['DOCUMENT_TITLE']), file=sys.stderr)
                         if action == 'insert':
-                            writer.add_document(
-                                path=r['DOCUMENT_GUID'],
-                                title=r['DOCUMENT_TITLE'],
-                                content=r['DOCUMENT_TITLE'] + '\n' + html_content.body.text,
-                                location=r['DOCUMENT_LOCATION'],
-                                create_time=datetime.strptime(r['DT_CREATED'], self.DATE_FORMAT),
-                                modify_time=datetime.strptime(r['DT_DATA_MODIFIED'], self.DATE_FORMAT)
-                            )
-                            sql = """insert into WIZ_INDEX (DOCUMENT_GUID, DOCUMENT_TITLE, DOCUMENT_LOCATION, DT_CREATED, DT_MODIFIED,DT_DATA_MODIFIED, WIZ_VERSION) 
-                            values (:DOCUMENT_GUID, :DOCUMENT_TITLE, :DOCUMENT_LOCATION, :DT_CREATED, :DT_MODIFIED, :DT_DATA_MODIFIED, :WIZ_VERSION)"""
+                            self._handle_insert_action(writer, r, content)
                         elif action == 'update':
                             writer.delete_by_term('path', r['DOCUMENT_GUID'])
                             writer.update_document(
                                 path=r['DOCUMENT_GUID'],
                                 title=r['DOCUMENT_TITLE'],
-                                content=r['DOCUMENT_TITLE'] + '\n' + html_content.body.text,
+                                content=r['DOCUMENT_TITLE'] + '\n' + content,
                                 location=r['DOCUMENT_LOCATION'],
                                 create_time=datetime.strptime(r['DT_CREATED'], self.DATE_FORMAT),
                                 modify_time=datetime.strptime(r['DT_DATA_MODIFIED'], self.DATE_FORMAT)
@@ -221,6 +213,32 @@ class WizIndex(object):
                 zf.close()
         writer.commit()
         self.indexing = False
+
+
+    def _handle_insert_action(self, writer, r, content):
+        """处理插入文档的索引操作"""
+        writer.add_document(
+            path=r['DOCUMENT_GUID'],
+            title=r['DOCUMENT_TITLE'],
+            content=r['DOCUMENT_TITLE'] + '\n' + content,
+            location=r['DOCUMENT_LOCATION'],
+            create_time=datetime.strptime(r['DT_CREATED'], self.DATE_FORMAT),
+            modify_time=datetime.strptime(r['DT_DATA_MODIFIED'], self.DATE_FORMAT)
+        )
+        sql = """INSERT INTO WIZ_INDEX 
+                (DOCUMENT_GUID, DOCUMENT_TITLE, DOCUMENT_LOCATION, DT_CREATED, DT_MODIFIED, DT_DATA_MODIFIED, WIZ_VERSION) 
+                VALUES (:DOCUMENT_GUID, :DOCUMENT_TITLE, :DOCUMENT_LOCATION, :DT_CREATED, :DT_MODIFIED, :DT_DATA_MODIFIED, :WIZ_VERSION)"""
+        params = {
+            'DOCUMENT_GUID': r['DOCUMENT_GUID'],
+            'DOCUMENT_TITLE': r['DOCUMENT_TITLE'],
+            'DOCUMENT_LOCATION': r['DOCUMENT_LOCATION'],
+            'DT_CREATED': r['DT_CREATED'],
+            'DT_MODIFIED': r['DT_MODIFIED'],
+            'DT_DATA_MODIFIED': r['DT_DATA_MODIFIED'],
+            'WIZ_VERSION': r['WIZ_VERSION']
+        }
+        with self.index_db.get_connection() as conn:
+            conn.query(sql, **params)
 
     def _handle_delete_action(self, writer, data):
         """处理删除文档的索引操作"""
