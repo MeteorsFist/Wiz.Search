@@ -198,8 +198,7 @@ class WizIndex(object):
                             DT_MODIFIED=:DT_MODIFIED, DT_DATA_MODIFIED=:DT_DATA_MODIFIED, WIZ_VERSION=:WIZ_VERSION where DOCUMENT_GUID=:DOCUMENT_GUID"""
 
                         elif action == 'delete':
-                            writer.delete_by_term('path', r['DOCUMENT_GUID'])
-                            sql = """delete from WIZ_INDEX where DOCUMENT_GUID=:DOCUMENT_GUID"""
+                            self._handle_delete_action(writer, r)
                         else:
                             continue
 
@@ -222,6 +221,16 @@ class WizIndex(object):
                 zf.close()
         writer.commit()
         self.indexing = False
+
+    def _handle_delete_action(self, writer, data):
+        """处理删除文档的索引操作"""
+        writer.delete_by_term('path', data['DOCUMENT_GUID'])
+        sql = """DELETE FROM WIZ_INDEX WHERE DOCUMENT_GUID = :DOCUMENT_GUID"""
+        params = {
+            'DOCUMENT_GUID': data['DOCUMENT_GUID']
+        }
+        with self.index_db.get_connection() as conn:
+            conn.query(sql, **params)
 
     def search(self, keyword, page_num=1, search_in=None, folder_path=None,
                 create_start_date=None, create_end_date=None, 
