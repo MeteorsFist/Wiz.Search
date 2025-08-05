@@ -20,7 +20,7 @@ from whoosh.query import And, Prefix, TermRange
 
 jieba.setLogLevel(jieba.logging.ERROR)
 
-
+MAX_SUPPORTED_INDEX_VERSION = 2 # 最大兼容版本号
 CURRENT_INDEX_VERSION = 2
 
 CREATE_WIZ_INDEX_TABLE_SQL = """
@@ -59,6 +59,7 @@ class WizIndex(object):
         self.index_path = os.path.join(base_path, "data")
         self.wiz_path = wiz_path
         self.index_db = records.Database('sqlite:///' + os.path.join(self.base_path, 'database.db'))
+        self.indexing = False
 
         try:
             with self.index_db.get_connection() as conn:
@@ -70,7 +71,7 @@ class WizIndex(object):
                     conn.query("INSERT INTO WIZ_INDEX_VERSION (name, version) VALUES ('version', 0)")
                 # 查询版本号，如果版本号小于2，需要重建索引
                 result = conn.query("SELECT version FROM WIZ_INDEX_VERSION WHERE name = 'version'").first()
-                if not result or result['version'] < 2:
+                if not result or result['version'] < MAX_SUPPORTED_INDEX_VERSION:
                     conn.query('DROP TABLE IF EXISTS WIZ_INDEX')
                     conn.query(CREATE_WIZ_INDEX_TABLE_SQL)
                     conn.query('PRAGMA auto_vacuum = FULL;')
@@ -78,7 +79,6 @@ class WizIndex(object):
 
                     if os.path.exists(self.index_path):
                         shutil.rmtree(self.index_path)
-
         except:
             pass
 
@@ -138,6 +138,10 @@ class WizIndex(object):
         return index_data
 
     def create_or_update_index(self):
+        if self.indexing:
+            print(f"已有索引任务正在进行，请稍后再试！")
+            return
+        self.indexing = True
         index_data = self.get_should_index_data()
         idx = self.get_idx()
         writer = idx.writer()
@@ -217,6 +221,7 @@ class WizIndex(object):
             else:
                 zf.close()
         writer.commit()
+        self.indexing = False
 
     def search(self, keyword, page_num=1, search_in=None, folder_path=None,
                 create_start_date=None, create_end_date=None, 
