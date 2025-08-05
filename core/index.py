@@ -148,72 +148,52 @@ class WizIndex(object):
         count = len(index_data)
         if self.verbose:
             print('total: %s' % count, file=sys.stderr)
+        
         for i, v in enumerate(index_data):
             r = v['data']
             action = v['action']
             document_guid = r['DOCUMENT_GUID']
 
             zipfilename = os.path.join(self.wiz_path, 'notes/{%s}' % document_guid)
-            if not os.path.exists(zipfilename):
-                continue
+            content = self._extract_content_from_zip(zipfilename)
+
+            if self.verbose:
+                print('%s %s, %s' % (i, action, r['DOCUMENT_TITLE']), file=sys.stderr)
 
             try:
-                zf = zipfile.ZipFile(zipfilename)
-            except zipfile.BadZipFile as e:
+                if action == 'insert':
+                    self._handle_insert_action(writer, r, content)
+                elif action == 'update':
+                    self._handle_update_action(writer, r, content)
+                elif action == 'delete':
+                    self._handle_delete_action(writer, r)
+                else:
+                    continue
+            except Exception as e:
                 if self.verbose:
-                    print("Skip encrypted document", file=sys.stderr)
-                continue
+                    print(f"Error handling action {action} for {r['DOCUMENT_TITLE']}: {e}", file=sys.stderr)
 
-            for filename in zf.namelist():
-                if filename == 'index.html':
-                    try:
-                        data = zf.read(filename)
-                        html_content = BeautifulSoup(data, 'html5lib')
-                        content = html_content.body.text
-                        if self.verbose:
-                            print('%s %s, %s' % (i, action, r['DOCUMENT_TITLE']), file=sys.stderr)
-                        if action == 'insert':
-                            self._handle_insert_action(writer, r, content)
-                        elif action == 'update':
-                            writer.delete_by_term('path', r['DOCUMENT_GUID'])
-                            writer.update_document(
-                                path=r['DOCUMENT_GUID'],
-                                title=r['DOCUMENT_TITLE'],
-                                content=r['DOCUMENT_TITLE'] + '\n' + content,
-                                location=r['DOCUMENT_LOCATION'],
-                                create_time=datetime.strptime(r['DT_CREATED'], self.DATE_FORMAT),
-                                modify_time=datetime.strptime(r['DT_DATA_MODIFIED'], self.DATE_FORMAT)
-                            )
-
-                            sql = """update WIZ_INDEX set DOCUMENT_TITLE=:DOCUMENT_TITLE, 
-                            DOCUMENT_LOCATION=:DOCUMENT_LOCATION, DT_CREATED=:DT_CREATED, 
-                            DT_MODIFIED=:DT_MODIFIED, DT_DATA_MODIFIED=:DT_DATA_MODIFIED, WIZ_VERSION=:WIZ_VERSION where DOCUMENT_GUID=:DOCUMENT_GUID"""
-
-                        elif action == 'delete':
-                            self._handle_delete_action(writer, r)
-                        else:
-                            continue
-
-                        params = {
-                            'DOCUMENT_GUID': r['DOCUMENT_GUID'],
-                            'DOCUMENT_TITLE': r['DOCUMENT_TITLE'],
-                            'DOCUMENT_LOCATION': r['DOCUMENT_LOCATION'],
-                            'DT_CREATED': r['DT_CREATED'],
-                            'DT_MODIFIED': r['DT_MODIFIED'],
-                            'DT_DATA_MODIFIED': r['DT_DATA_MODIFIED'],
-                            'WIZ_VERSION': r['WIZ_VERSION']
-                        }
-                        with self.index_db.get_connection() as conn:
-                            conn.query(sql, **params)
-
-                    except Exception as e:
-                        if self.verbose:
-                            print(e, file=sys.stderr)
-            else:
-                zf.close()
         writer.commit()
         self.indexing = False
 
+    def _extract_content_from_zip(self, zipfilename):
+        if not os.path.exists(zipfilename):
+            return ""
+        try:
+            with zipfile.ZipFile(zipfilename, 'r') as zf:
+                if 'index.html' not in zf.namelist():
+                    return ""
+                data = zf.read('index.html')
+                html_content = BeautifulSoup(data, 'html5lib')
+                # 确保 body 存在，避免 AttributeError
+                if html_content.body:
+                    return html_content.body.get_text(strip=True)
+                else:
+                    return html_content.get_text(strip=True)  # fallback: 使用整个文档文本
+        except (zipfile.BadZipFile, Exception) as e:
+            if self.verbose:
+                print(f"Error reading zip file {zipfilename}: {e}", file=sys.stderr)
+            return ""
 
     def _handle_insert_action(self, writer, r, content):
         """处理插入文档的索引操作"""
@@ -239,6 +219,41 @@ class WizIndex(object):
         }
         with self.index_db.get_connection() as conn:
             conn.query(sql, **params)
+
+    def _handle_update_action(self, writer, r, content):
+        """处理更新文档的索引操作"""
+        # 删除旧的索引项
+        writer.delete_by_term('path', r['DOCUMENT_GUID'])
+        # 添加新的索引项
+        writer.update_document(
+            path=r['DOCUMENT_GUID'],
+            title=r['DOCUMENT_TITLE'],
+            content=r['DOCUMENT_TITLE'] + '\n' + content,
+            location=r['DOCUMENT_LOCATION'],
+            create_time=datetime.strptime(r['DT_CREATED'], self.DATE_FORMAT),
+            modify_time=datetime.strptime(r['DT_DATA_MODIFIED'], self.DATE_FORMAT)
+        )
+        # 更新数据库中的记录
+        sql = """UPDATE WIZ_INDEX 
+                SET DOCUMENT_TITLE = :DOCUMENT_TITLE, 
+                    DOCUMENT_LOCATION = :DOCUMENT_LOCATION, 
+                    DT_CREATED = :DT_CREATED, 
+                    DT_MODIFIED = :DT_MODIFIED, 
+                    DT_DATA_MODIFIED = :DT_DATA_MODIFIED, 
+                    WIZ_VERSION = :WIZ_VERSION 
+                WHERE DOCUMENT_GUID = :DOCUMENT_GUID"""
+        params = {
+            'DOCUMENT_GUID': r['DOCUMENT_GUID'],
+            'DOCUMENT_TITLE': r['DOCUMENT_TITLE'],
+            'DOCUMENT_LOCATION': r['DOCUMENT_LOCATION'],
+            'DT_CREATED': r['DT_CREATED'],
+            'DT_MODIFIED': r['DT_MODIFIED'],
+            'DT_DATA_MODIFIED': r['DT_DATA_MODIFIED'],
+            'WIZ_VERSION': r['WIZ_VERSION']
+        }
+        with self.index_db.get_connection() as conn:
+            conn.query(sql, **params)
+
 
     def _handle_delete_action(self, writer, data):
         """处理删除文档的索引操作"""
