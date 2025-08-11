@@ -60,32 +60,75 @@ new QWebChannel(qt.webChannelTransport, async function(channel) {
                 loading: false,
                 tableData: [],
                 search_in: 'content',
-                createDateRange: [],
                 selectedFolder: [],
                 currentPath: [],
-                modifyDateRange: [],
-                folderOptions: []
+                folderOptions: [],
+                pickerOptions: {
+                    disabledDate(time) {
+                        return time.getTime() > Date.now();
+                    },
+                    shortcuts: [
+                        {
+                            text: '今天',
+                        onClick(picker) {
+                            const date = new Date();
+                            date.setDate(date.getDate());
+                            picker.$emit('pick', date);
+                            }
+                        },
+                        {
+                            text: '三天前',
+                        onClick(picker) {
+                            const date = new Date();
+                            date.setDate(date.getDate() - 3);
+                            picker.$emit('pick', date);
+                            }
+                        },
+                        {
+                            text: '一周前',
+                            onClick(picker) {
+                                const date = new Date();
+                                date.setDate(date.getDate() - 7);
+                                picker.$emit('pick', date);
+                            }
+                        },
+                        {
+                            text: '一月前',
+                            onClick(picker) {
+                                const date = new Date();
+                                date.setMonth(date.getMonth() - 1);
+                                picker.$emit('pick', date);
+                            }
+                        },
+                        {
+                            text: '半年前',
+                            onClick(picker) {
+                                const date = new Date();
+                                date.setMonth(date.getMonth() - 6);
+                                picker.$emit('pick', date);
+                            }
+                        },
+                        {
+                            text: '一年前',
+                            onClick(picker) {
+                                const date = new Date();
+                                date.setFullYear(date.getFullYear() - 1);
+                                picker.$emit('pick', date);
+                            }
+                        }
+                    ]
+                },
+                createStartDate: null,
+                createEndDate: null,
+                modifyStartDate: null,
+                modifyEndDate: null
             }
         },
         mounted: function () {
             this.hasInit = true
-            this.loadFolders();
+            //this.loadFolders();  // 修改为点击时加载
         },
         methods: {
-            loadFolders() {
-                this.folderOptions = [
-                    {
-                        value: 'folder1',
-                        label: '目录1',
-                        children: [
-                            {
-                                value: 'folder1-1',
-                                label: '子目录1-1'
-                            }
-                        ]
-                    }
-                ];
-            },
             search: function () {
                 this.loadPageList(1);
             },
@@ -104,10 +147,10 @@ new QWebChannel(qt.webChannelTransport, async function(channel) {
                     'keyword': this.keyword,
                     'page_num': pageNum,
                     'search_in': this.search_in,
-                    'create_start_date': this.createDateRange ? this.createDateRange[0] : null,
-                    'create_end_date': this.createDateRange ? this.createDateRange[1] : null,
-                    'modify_start_date': this.modifyDateRange ? this.modifyDateRange[0] : null,
-                    'modify_end_date': this.modifyDateRange ? this.modifyDateRange[1] : null,
+                    'create_start_date': this.createStartDate,
+                    'create_end_date': this.createEndDate,
+                    'modify_start_date': this.modifyStartDate,
+                    'modify_end_date': this.modifyEndDate,
                     'folder_path': this.actualFolderPath
                 };
                 
@@ -146,6 +189,11 @@ new QWebChannel(qt.webChannelTransport, async function(channel) {
                     showClose: true
                 });
             },
+            updateFolders: function () {
+                if (!this.folderOptions || this.folderOptions.length === 0) {
+                    this.loadFolders();
+                }
+            },
             async loadFolders() {
                 try {
                     const response = await axios.get(`http://127.0.0.1:${port}/api/folders`);
@@ -154,7 +202,7 @@ new QWebChannel(qt.webChannelTransport, async function(channel) {
                         console.log('Folder options:', this.folderOptions);
                     }
                 } catch (error) {
-                    this.showErrorMsg('获取目录结构失败');
+                    this.showErrorMsg('获取目录结构失败, 请检查wizsearch是否正常启动');
                     console.error(error);
                 }
             },
@@ -193,7 +241,6 @@ new QWebChannel(qt.webChannelTransport, async function(channel) {
                 this.actualFolderPath = node.path;
             },
             handleFolderChange(value) {
-                console.log('handleFolderChange', value);
                 if (!value) {
                     this.selectedFolder = null;
                     this.actualFolderPath = null;
@@ -202,7 +249,6 @@ new QWebChannel(qt.webChannelTransport, async function(channel) {
 
                 // 找到选中节点的信息
                 const found = this.findNodeByName(this.folderOptions, value[value.length - 1]);
-				console.log('handleFolderChange found', found);
                 if (found) {
                     this.selectedFolder = value;
                     // 如果选中的是"全部"节点，使用其父节点的路径
@@ -213,8 +259,6 @@ new QWebChannel(qt.webChannelTransport, async function(channel) {
                 this.currentPath = expandedNodes;
             },
             findNodeByName(options, name) {
-				console.log('options ', options);
-				console.log('name2 ', name);
                 for (const option of options) {
                     if (option.name === name) {
                         return option;
